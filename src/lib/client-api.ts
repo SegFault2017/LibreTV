@@ -1,6 +1,6 @@
 'use client';
 
-import type { SearchResponse, SearchStreamEvent, SourceSearchOutcome, VideoDetail, DoubanResponse, BangumiCalendarResponse, AuthStatusResponse, SourceConfig, SearchResultItem, LivePlaylistResponse, LiveEpgResponse, SourceListPayload, QualityProbeItem, QualityProbeResult } from './types';
+import type { BrowseResponse, SearchResponse, SearchStreamEvent, SourceSearchOutcome, VideoDetail, DoubanResponse, BangumiCalendarResponse, AuthStatusResponse, SourceConfig, SearchResultItem, LivePlaylistResponse, LiveEpgResponse, SourceListPayload, QualityProbeItem, QualityProbeResult } from './types';
 
 /**
  * 客户端 API 封装。401 时触发全局事件打开登录框，
@@ -205,6 +205,17 @@ export const api = {
   bangumiCalendar: (signal?: AbortSignal) => request<BangumiCalendarResponse>('/api/bangumi/calendar', { signal }),
 
   /** 影视热榜（60s API 免 key）：豆瓣周榜五个类目 + 百度热播剧 */
+  /** 分类浏览：按点播源分类拉取最新影片（含分类表），首页「分类浏览」使用 */
+  browse: (source: SourceConfig, type: string, page: number, filterAdult: boolean, signal?: AbortSignal) => {
+    const sp = new URLSearchParams({
+      source: JSON.stringify({ key: source.key, name: source.name, url: source.url, isAdult: source.isAdult }),
+      pg: String(page),
+      filterAdult: filterAdult ? '1' : '0',
+    });
+    if (type) sp.set('t', type);
+    return request<BrowseResponse>(`/api/browse?${sp.toString()}`, { signal });
+  },
+
   hotList: (id: string, signal?: AbortSignal) => {
     const sp = new URLSearchParams({ id });
     return request<DoubanResponse>(`/api/hot-list?${sp.toString()}`, { signal });

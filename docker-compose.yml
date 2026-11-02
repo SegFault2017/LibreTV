@@ -18,10 +18,10 @@ services:
       # - PROXY_SECRET=your-secret
       # 可选：Cookie Secure 策略覆盖（true=强制开启 / false=强制关闭；不设置时按请求协议自动推导，HTTP 部署无需配置）
       # - COOKIE_SECURE=true
-      # 可选：预置采集站（JSON 数组），用户端自动出现且默认勾选
-      # - DEFAULT_SOURCES=[{"name":"示例源","url":"https://example.com/api.php/provide/vod"}]
-      # 可选：预置直播源（M3U 订阅，JSON 数组），epg 为可选节目单地址
-      # - DEFAULT_LIVE_SOURCES=[{"name":"示例直播源","url":"https://example.com/list.m3u","epg":"https://example.com/epg.xml.gz"}]
+      # 预置采集站（JSON 数组），用户端自动出现且默认勾选
+      - DEFAULT_SOURCES=[{"name":"光速资源","url":"https://api.guangsuapi.com/api.php/provide/vod"}]
+      # 预置直播源：iptv-org 中文频道（各国电视台公开免费播出的频道）
+      - DEFAULT_LIVE_SOURCES=[{"name":"iptv-org 中文频道","url":"https://iptv-org.github.io/iptv/languages/zho.m3u"}]
       # 可选：预置数据源订阅（SourceList JSON 链接，一次下发点播源 + 直播源）
       # refreshDays 为该订阅的静默刷新周期初始值（1-365 天，缺省 1 天），可省略；用户在面板改过后以面板为准
       # - DEFAULT_SUBSCRIPTIONS=["https://example.com/sources.json", {"url":"https://example.com/list.json","name":"名称","refreshDays":10}]

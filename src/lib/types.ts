@@ -25,6 +25,22 @@ export interface SearchResultItem {
   isAdult?: boolean;
 }
 
+/** 点播源分类（Apple CMS type） */
+export interface BrowseCategory {
+  id: string;
+  /** 父分类 id，顶级分类为 "0" */
+  pid: string;
+  name: string;
+}
+
+/** /api/browse 响应：分类表 + 某分类的一页影片 */
+export interface BrowseResponse {
+  categories: BrowseCategory[];
+  list: SearchResultItem[];
+  page: number;
+  pageCount: number;
+}
+
 export interface VideoInfo {
   title?: string;
   cover?: string;
