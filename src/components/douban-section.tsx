@@ -61,18 +61,11 @@ function DoubanView({ onPick }: { onPick: (title: string) => void }) {
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-1.5 mb-4">
+      <div className="flex flex-wrap gap-2 sm:gap-2.5 mb-4">
         {tags.map((t) => (
-          <button
-            key={t}
-            className={cn(
-              'px-2.5 py-1 rounded-full text-xs transition-colors',
-              t === tag ? 'bg-accent text-on-accent' : 'bg-chip text-muted hover:text-content hover:bg-hover'
-            )}
-            onClick={() => setTag(t)}
-          >
+          <ChipButton key={t} active={t === tag} onClick={() => setTag(t)}>
             {t}
-          </button>
+          </ChipButton>
         ))}
       </div>
 
@@ -111,7 +104,7 @@ function BangumiView({ onPick }: { onPick: (title: string) => void }) {
 
   return (
     <section aria-label="新番放送推荐">
-      <div className="flex flex-wrap gap-1.5 mb-4">
+      <div className="flex flex-wrap gap-2 sm:gap-2.5 mb-4">
         <ChipButton active={weekday === 'all'} onClick={() => setWeekday('all')}>
           全部
         </ChipButton>
@@ -159,7 +152,7 @@ function HotListView({ onPick }: { onPick: (title: string) => void }) {
 
   return (
     <section aria-label="影视榜单推荐">
-      <div className="flex flex-wrap gap-1.5 mb-4">
+      <div className="flex flex-wrap gap-2 sm:gap-2.5 mb-4">
         {HOT_LISTS.map((l) => (
           <ChipButton key={l.id} active={listId === l.id} onClick={() => setListId(l.id)}>
             {l.label}
@@ -198,11 +191,9 @@ function GridSkeleton() {
 function ChipButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
     <button
-      className={cn(
-        'px-2.5 py-1 rounded-full text-xs transition-colors',
-        active ? 'bg-accent text-on-accent' : 'bg-chip text-muted hover:text-content hover:bg-hover'
-      )}
+      className={cn('filter-tag', active && 'filter-tag-active')}
       onClick={onClick}
+      aria-pressed={active}
     >
       {children}
     </button>

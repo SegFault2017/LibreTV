@@ -6,6 +6,10 @@ import { api } from '@/lib/client-api';
 import { useAppStore } from '@/lib/store';
 import { cn } from '@/lib/utils';
 import type { BrowseCategory, SearchResultItem, SourceConfig } from '@/lib/types';
+import { allYearBuckets, countYearBuckets, yearBucket, type YearBucket } from '@/lib/year-buckets';
+
+/** 选中的年份在已加载影片中一部都没有时，最多自动翻几页去找 */
+const MAX_AUTO_PAGES = 5;
 import { DoubanCard } from './video-card';
 
 /**
@@ -29,8 +33,9 @@ export function CategorySection({
   const [typeId, setTypeId] = useState('');
   /** 分类表：每次响应都带回，单独保存以免切换分类加载时 chips 闪烁 */
   const [categories, setCategories] = useState<BrowseCategory[]>([]);
-  /** Selected year filter ('' = all). Filters only the pages loaded so far. */
-  const [year, setYear] = useState('');
+  /** Selected year group (null = all). Filters only the pages loaded so far. */
+  const [year, setYear] = useState<YearBucket | null>(null);
+  const currentYear = useMemo(() => new Date().getFullYear(), []);
 
   const source = sources.find((s) => s.key === sourceKey) ?? sources[0];
 
@@ -84,23 +89,39 @@ export function CategorySection({
   }, [query.data]);
 
   // Switching category or source clears the year filter
-  useEffect(() => setYear(''), [typeId, source?.key]);
+  useEffect(() => setYear(null), [typeId, source?.key]);
 
-  // Years present in the loaded items, newest first, unknown last, with counts
+  // Continuous year row: every recent year and every decade, with counts from the loaded items
+  // (0 = none loaded yet). Extra groups (未知 / future years) are added only when present.
   const yearCounts = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const it of items) {
-      const y = yearOf(it);
-      counts.set(y, (counts.get(y) ?? 0) + 1);
-    }
-    // Keep the selected year visible even if a refetch no longer contains it
-    if (year && !counts.has(year)) counts.set(year, 0);
-    return [...counts.entries()].sort(([a], [b]) =>
-      a === UNKNOWN_YEAR ? 1 : b === UNKNOWN_YEAR ? -1 : b.localeCompare(a)
+    const counted = new Map(
+      countYearBuckets(
+        items.map((it) => it.year),
+        currentYear
+      ).map((c) => [c.bucket.key, c])
     );
-  }, [items, year]);
+    const list = allYearBuckets(currentYear).map((bucket) => counted.get(bucket.key) ?? { bucket, count: 0 });
+    const listed = new Set(list.map((c) => c.bucket.key));
+    for (const c of counted.values()) if (!listed.has(c.bucket.key)) list.push(c);
+    return list.sort((a, b) => b.bucket.order - a.bucket.order);
+  }, [items, currentYear]);
 
-  const shown = useMemo(() => (year ? items.filter((it) => yearOf(it) === year) : items), [items, year]);
+  const shown = useMemo(
+    () => (year ? items.filter((it) => yearBucket(it.year, currentYear).key === year.key) : items),
+    [items, year, currentYear]
+  );
+
+  // A year with nothing loaded yet: fetch a few more pages automatically to look for it
+  const [autoPages, setAutoPages] = useState(0);
+  useEffect(() => setAutoPages(0), [year?.key, typeId, source?.key]);
+  const autoSearching =
+    Boolean(year) && shown.length === 0 && Boolean(query.hasNextPage) && autoPages < MAX_AUTO_PAGES;
+  const { fetchNextPage, isFetching } = query;
+  useEffect(() => {
+    if (!autoSearching || isFetching) return;
+    setAutoPages((n) => n + 1);
+    fetchNextPage();
+  }, [autoSearching, isFetching, fetchNextPage]);
 
   if (!source) return null;
 
@@ -126,7 +147,7 @@ export function CategorySection({
         )}
       </div>
 
-      <div className="flex flex-wrap gap-1.5 mb-2">
+      <div className="flex flex-wrap gap-2 sm:gap-2.5 mb-2">
         <Chip active={topId === ''} onClick={() => pickTop('')}>
           最新
         </Chip>
@@ -138,7 +159,7 @@ export function CategorySection({
       </div>
 
       {subs.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 mb-2 pl-2 border-l-2 border-line">
+        <div className="flex flex-wrap gap-2 mb-2 pl-2 border-l-2 border-line">
           {subs.map((c) => (
             <Chip key={c.id} small active={typeId === c.id} onClick={() => setTypeId(c.id)}>
               {c.name}
@@ -147,15 +168,21 @@ export function CategorySection({
         </div>
       )}
 
-      {!loadingFresh && yearCounts.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5 mt-3">
+      {!loadingFresh && items.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 mt-3">
           <span className="text-xs text-faint mr-1">年份</span>
-          <Chip small active={year === ''} onClick={() => setYear('')}>
+          <Chip small active={year === null} onClick={() => setYear(null)}>
             全部
           </Chip>
-          {yearCounts.map(([y, n]) => (
-            <Chip key={y} small active={year === y} onClick={() => setYear(y)}>
-              {y} <span className="opacity-60">{n}</span>
+          {yearCounts.map(({ bucket, count }) => (
+            <Chip
+              key={bucket.key}
+              small
+              dim={count === 0}
+              active={year?.key === bucket.key}
+              onClick={() => setYear(bucket)}
+            >
+              {bucket.label} <span className="opacity-60">{count}</span>
             </Chip>
           ))}
         </div>
@@ -174,8 +201,10 @@ export function CategorySection({
           <>
             {year && (
               <p className="text-xs text-faint mb-2">
-                已加载 {items.length} 部中有 {shown.length} 部为 {year}
-                {query.hasNextPage && '，点「加载更多」可找到更多'}
+                已加载 {items.length} 部中有 {shown.length} 部属于「{year.label}」
+                {autoSearching
+                  ? '，正在加载更多…'
+                  : query.hasNextPage && '，点「加载更多」可找到更多'}
               </p>
             )}
             <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2.5">
@@ -208,20 +237,24 @@ export function CategorySection({
 function Chip({
   active,
   small,
+  dim,
   onClick,
   children,
 }: {
   active: boolean;
   small?: boolean;
+  /** 暂无内容（已加载影片中没有该年份）：变暗但仍可点，点了会自动加载更多 */
+  dim?: boolean;
   onClick: () => void;
   children: React.ReactNode;
 }) {
   return (
     <button
       className={cn(
-        'rounded-full transition-colors',
-        small ? 'px-2 py-0.5 text-xs' : 'px-2.5 py-1 text-xs',
-        active ? 'bg-accent text-on-accent' : 'bg-chip text-muted hover:text-content hover:bg-hover'
+        'filter-tag',
+        small && 'filter-tag-sm',
+        active && 'filter-tag-active',
+        dim && !active && 'opacity-50'
       )}
       onClick={onClick}
       aria-pressed={active}
@@ -244,10 +277,3 @@ function GridSkeleton() {
   );
 }
 
-/** Label for videos without a usable year */
-const UNKNOWN_YEAR = '未知';
-
-function yearOf(item: SearchResultItem): string {
-  const y = (item.year || '').trim();
-  return /^(19|20)\d{2}$/.test(y) ? y : UNKNOWN_YEAR;
-}

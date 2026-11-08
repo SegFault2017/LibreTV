@@ -111,6 +111,18 @@ body {
   .chip {
     @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] transition-colors;
   }
+  /* 筛选标签（分类 / 推荐榜单 / 年份）：沿用旧版 LibreTV 的方角描边按钮，选中态为霓虹粉 */
+  .filter-tag {
+    @apply inline-flex items-center gap-1 rounded-md border border-line bg-chip/70 px-4 py-1.5 text-sm text-content/90
+      transition-colors hover:border-pink-500/60 hover:bg-hover hover:text-content
+      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-500/50;
+  }
+  .filter-tag-sm {
+    @apply px-3 py-1 text-xs;
+  }
+  .filter-tag-active {
+    @apply border-pink-500 bg-pink-600 text-white hover:border-pink-400 hover:bg-pink-500 hover:text-white;
+  }
   .scrollbar-thin::-webkit-scrollbar {
     width: 6px;
     height: 6px;
