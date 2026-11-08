@@ -394,7 +394,19 @@ export function VideoCard({ item, onClick }: { item: SearchResultItem; onClick: 
 }
 
 /** 豆瓣推荐卡片（无来源徽章，点击直接搜索） */
-export function DoubanCard({ item, onClick }: { item: { title: string; cover: string; rating?: string }; onClick: () => void }) {
+export function DoubanCard({
+  item,
+  onClick,
+  badge,
+  year,
+}: {
+  item: { title: string; cover: string; rating?: string };
+  onClick: () => void;
+  /** 海报底部左侧的状态标签（如「更新至12集」「HD」） */
+  badge?: string;
+  /** 海报底部右侧的年份 */
+  year?: string;
+}) {
   const imageProxyMode = useAppStore((s) => s.imageProxyMode);
   const customImageProxy = useAppStore((s) => s.customImageProxy);
   const [imgFailed, setImgFailed] = useState(false);
@@ -402,7 +414,7 @@ export function DoubanCard({ item, onClick }: { item: { title: string; cover: st
 
   return (
     <div
-      className="card cursor-pointer hover:scale-[1.03] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+      className="card group cursor-pointer hover:-translate-y-0.5 hover:border-accent/50 hover:shadow-lg hover:shadow-black/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
       role="button"
       tabIndex={0}
       onClick={onClick}
@@ -414,14 +426,14 @@ export function DoubanCard({ item, onClick }: { item: { title: string; cover: st
         }
       }}
     >
-      <div className="relative aspect-[2/3] bg-chip">
+      <div className="relative aspect-[2/3] bg-chip overflow-hidden">
         {item.cover && !imgFailed ? (
           <SmartImage
             url={item.cover}
             mode={imageProxyMode}
             customProxy={customImageProxy}
             alt={item.title}
-            className="w-full h-full object-cover"
+            className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
             onExhausted={() => setImgFailed(true)}
           />
         ) : (
@@ -436,9 +448,17 @@ export function DoubanCard({ item, onClick }: { item: { title: string; cover: st
             ★ {item.rating}
           </span>
         )}
+        {(badge || year) && (
+          // 底部渐变条：保证任意海报上的白字可读
+          <div className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-1 bg-gradient-to-t from-black/85 via-black/40 to-transparent px-1.5 pb-1.5 pt-6 text-[11px] leading-tight text-white">
+            <span className="truncate font-medium">{badge}</span>
+            {year && <span className="shrink-0 tabular-nums text-white/75">{year}</span>}
+          </div>
+        )}
       </div>
-      <div className="p-2">
-        <div className="text-xs font-medium text-content truncate" title={item.title}>
+      <div className="px-2 py-1.5">
+        {/* 两行标题 + 固定高度：长片名不再被一刀截断，同行卡片仍然等高 */}
+        <div className="text-xs font-medium leading-snug text-content line-clamp-2 min-h-[2.75em]" title={item.title}>
           {item.title}
         </div>
       </div>

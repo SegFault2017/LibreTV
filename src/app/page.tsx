@@ -51,6 +51,19 @@ function HomeContent() {
   /** 流式搜索中已结算的源（data 就绪前用于增量渲染） */
   const [streamedOutcomes, setStreamedOutcomes] = useState<SourceSearchOutcome[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
+  /** 首页大搜索框滚出视口后，顶栏显示紧凑搜索框，随处可搜 */
+  const heroSearchRef = useRef<HTMLElement>(null);
+  const [heroSearchVisible, setHeroSearchVisible] = useState(true);
+  useEffect(() => {
+    const el = heroSearchRef.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    // 顶栏高 56px：被顶栏盖住也算「看不见」
+    const observer = new IntersectionObserver(([entry]) => setHeroSearchVisible(entry.isIntersecting), {
+      rootMargin: '-56px 0px 0px 0px',
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   // URL 驱动搜索：?s= 变化时回填输入框
   useEffect(() => {
@@ -166,7 +179,7 @@ function HomeContent() {
 
   return (
     <div className="min-h-screen flex flex-col">
-      <Header />
+      <Header showSearch={!heroSearchVisible} />
 
       <main className="relative flex-1 max-w-6xl w-full mx-auto px-4 py-6">
         {/* 首屏氛围渐变 */}
@@ -176,16 +189,16 @@ function HomeContent() {
             className="pointer-events-none absolute inset-x-0 top-0 h-[420px] -z-10"
             style={{
               background:
-                'radial-gradient(60% 60% at 50% 0%, rgba(35,173,229,0.10) 0%, rgba(35,173,229,0.03) 45%, transparent 75%)',
+                'radial-gradient(60% 60% at 50% 0%, rgba(219,39,119,0.10) 0%, rgba(219,39,119,0.03) 45%, transparent 75%)',
             }}
           />
         )}
 
         {/* 搜索区 */}
-        <section className={cn('flex flex-col items-center', urlQuery ? 'mb-6' : 'mt-8 mb-8')}>
+        <section ref={heroSearchRef} className={cn('flex flex-col items-center', urlQuery ? 'mb-6' : 'mt-2 mb-6 sm:mt-6 sm:mb-8')}>
           {!urlQuery && (
-            <header className="text-center mb-6">
-              <h1 className="text-4xl sm:text-5xl font-bold brand-gradient">LibreTV</h1>
+            <header className="text-center mb-4 sm:mb-5">
+              <h1 className="text-3xl sm:text-4xl font-bold brand-gradient">LibreTV</h1>
             </header>
           )}
           {urlQuery && <h1 className="sr-only">LibreTV 视频搜索</h1>}

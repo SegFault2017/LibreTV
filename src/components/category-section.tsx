@@ -1,12 +1,13 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { keepPreviousData, useInfiniteQuery } from '@tanstack/react-query';
 import { api } from '@/lib/client-api';
 import { useAppStore } from '@/lib/store';
 import { cn } from '@/lib/utils';
 import type { BrowseCategory, SearchResultItem, SourceConfig } from '@/lib/types';
-import { allYearBuckets, countYearBuckets, yearBucket, type YearBucket } from '@/lib/year-buckets';
+import { visibleYearBuckets, yearBucket, type YearBucket } from '@/lib/year-buckets';
+import { formatRemarks } from '@/lib/remarks';
 
 /** 选中的年份在已加载影片中一部都没有时，最多自动翻几页去找 */
 const MAX_AUTO_PAGES = 5;
@@ -91,20 +92,16 @@ export function CategorySection({
   // Switching category or source clears the year filter
   useEffect(() => setYear(null), [typeId, source?.key]);
 
-  // Continuous year row: every recent year and every decade, with counts from the loaded items
-  // (0 = none loaded yet). Extra groups (未知 / future years) are added only when present.
-  const yearCounts = useMemo(() => {
-    const counted = new Map(
-      countYearBuckets(
+  // Year row: recent years one by one, then decades down to the oldest one with videos (no gaps)
+  const yearCounts = useMemo(
+    () =>
+      visibleYearBuckets(
         items.map((it) => it.year),
-        currentYear
-      ).map((c) => [c.bucket.key, c])
-    );
-    const list = allYearBuckets(currentYear).map((bucket) => counted.get(bucket.key) ?? { bucket, count: 0 });
-    const listed = new Set(list.map((c) => c.bucket.key));
-    for (const c of counted.values()) if (!listed.has(c.bucket.key)) list.push(c);
-    return list.sort((a, b) => b.bucket.order - a.bucket.order);
-  }, [items, currentYear]);
+        currentYear,
+        year?.key
+      ),
+    [items, currentYear, year?.key]
+  );
 
   const shown = useMemo(
     () => (year ? items.filter((it) => yearBucket(it.year, currentYear).key === year.key) : items),
@@ -123,70 +120,100 @@ export function CategorySection({
     fetchNextPage();
   }, [autoSearching, isFetching, fetchNextPage]);
 
+  // Infinite scroll (only without a year filter: with one, the sentinel would stay visible and
+  // keep paging through the whole source; the year filter has its own bounded auto-load above)
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  const [nearBottom, setNearBottom] = useState(false);
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver((entries) => setNearBottom(entries.some((e) => e.isIntersecting)), {
+      rootMargin: '600px',
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  });
+  const { hasNextPage } = query;
+  useEffect(() => {
+    if (nearBottom && !year && hasNextPage && !isFetching) fetchNextPage();
+  }, [nearBottom, year, hasNextPage, isFetching, fetchNextPage]);
+
   if (!source) return null;
 
   const loadingFresh = query.isLoading || (query.isPlaceholderData && query.isFetching);
 
   return (
     <section aria-label="分类浏览" className="mb-10">
-      <div className="flex items-center justify-between gap-2 mb-3">
-        <h2 className="text-base font-semibold text-content">分类浏览</h2>
-        {sources.length > 1 && (
-          <select
-            className="bg-chip text-sm text-content rounded-lg px-2 py-1 border border-line focus:outline-none focus:border-accent"
-            value={source.key}
-            onChange={(e) => setSourceKey(e.target.value)}
-            aria-label="选择点播源"
-          >
-            {sources.map((s) => (
-              <option key={s.key} value={s.key}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-        )}
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <h2 className="text-base font-semibold text-content shrink-0">分类浏览</h2>
+        {sources.length > 1 &&
+          (sources.length <= 4 ? (
+            <div className="flex gap-1.5 overflow-x-auto" role="group" aria-label="选择点播源">
+              {sources.map((s) => (
+                <Chip key={s.key} small active={s.key === source.key} onClick={() => setSourceKey(s.key)}>
+                  {s.name}
+                </Chip>
+              ))}
+            </div>
+          ) : (
+            <select
+              className="bg-chip text-sm text-content rounded-lg px-2 py-1 border border-line focus:outline-none focus:border-accent"
+              value={source.key}
+              onChange={(e) => setSourceKey(e.target.value)}
+              aria-label="选择点播源"
+            >
+              {sources.map((s) => (
+                <option key={s.key} value={s.key}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          ))}
       </div>
 
-      <div className="flex flex-wrap gap-2 sm:gap-2.5 mb-2">
-        <Chip active={topId === ''} onClick={() => pickTop('')}>
-          最新
-        </Chip>
-        {tops.map((c) => (
-          <Chip key={c.id} active={topId === c.id} onClick={() => pickTop(c.id)}>
-            {c.name}
+      {/* 筛选区吸顶（顶栏 h-14 之下）：长列表滚动时随时可切换分类 */}
+      <div className="sticky top-14 z-30 -mx-4 px-4 py-2 space-y-2 bg-page/95 backdrop-blur supports-[backdrop-filter]:bg-page/90">
+        <div className="filter-row" role="group" aria-label="分类">
+          <Chip active={topId === ''} onClick={() => pickTop('')}>
+            最新
           </Chip>
-        ))}
-      </div>
-
-      {subs.length > 0 && (
-        <div className="flex flex-wrap gap-2 mb-2 pl-2 border-l-2 border-line">
-          {subs.map((c) => (
-            <Chip key={c.id} small active={typeId === c.id} onClick={() => setTypeId(c.id)}>
+          {tops.map((c) => (
+            <Chip key={c.id} active={topId === c.id} onClick={() => pickTop(c.id)}>
               {c.name}
             </Chip>
           ))}
         </div>
-      )}
 
-      {!loadingFresh && items.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2 mt-3">
-          <span className="text-xs text-faint mr-1">年份</span>
-          <Chip small active={year === null} onClick={() => setYear(null)}>
-            全部
-          </Chip>
-          {yearCounts.map(({ bucket, count }) => (
-            <Chip
-              key={bucket.key}
-              small
-              dim={count === 0}
-              active={year?.key === bucket.key}
-              onClick={() => setYear(bucket)}
-            >
-              {bucket.label} <span className="opacity-60">{count}</span>
+        {subs.length > 0 && (
+          <div className="filter-row" role="group" aria-label="子分类">
+            {subs.map((c) => (
+              <Chip key={c.id} small active={typeId === c.id} onClick={() => setTypeId(c.id)}>
+                {c.name}
+              </Chip>
+            ))}
+          </div>
+        )}
+
+        {!loadingFresh && items.length > 0 && (
+          <div className="filter-row items-center" role="group" aria-label="年份">
+            <span className="text-xs text-faint shrink-0 mr-0.5">年份</span>
+            <Chip small active={year === null} onClick={() => setYear(null)}>
+              全部
             </Chip>
-          ))}
-        </div>
-      )}
+            {yearCounts.map(({ bucket, count }) => (
+              <Chip
+                key={bucket.key}
+                small
+                dim={count === 0}
+                active={year?.key === bucket.key}
+                onClick={() => setYear(bucket)}
+              >
+                {bucket.label} <span className="opacity-60">{count}</span>
+              </Chip>
+            ))}
+          </div>
+        )}
+      </div>
 
       <div className="mt-4">
         {query.isError ? (
@@ -207,15 +234,18 @@ export function CategorySection({
                   : query.hasNextPage && '，点「加载更多」可找到更多'}
               </p>
             )}
-            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2.5">
+            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2.5 sm:gap-3">
               {shown.map((item) => (
                 <DoubanCard
                   key={`${item.sourceKey}_${item.vodId}`}
                   item={{ title: item.name, cover: item.pic || '' }}
+                  badge={formatRemarks(item.remarks)}
+                  year={/^(19|20)\d{2}$/.test(item.year?.trim() ?? '') ? item.year?.trim() : undefined}
                   onClick={() => onOpen(item)}
                 />
               ))}
             </div>
+            <div ref={sentinelRef} aria-hidden />
             {query.hasNextPage && (
               <div className="flex justify-center mt-4">
                 <button

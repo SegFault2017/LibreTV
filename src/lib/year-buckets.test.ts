@@ -1,5 +1,37 @@
 import { describe, expect, it } from 'vitest';
-import { allYearBuckets, countYearBuckets, recentCutoff, yearBucket } from './year-buckets';
+import { allYearBuckets, countYearBuckets, recentCutoff, visibleYearBuckets, yearBucket } from './year-buckets';
+
+describe('visibleYearBuckets', () => {
+  const labels = (years: string[], selected?: string) =>
+    visibleYearBuckets(years, 2026, selected).map((c) => c.bucket.label);
+  const RECENT = ['2026', '2025', '2024', '2023', '2022', '2021', '2020'];
+
+  it('只有近年影片时不展示任何年代', () => {
+    expect(labels(['2026', '2023'])).toEqual(RECENT);
+  });
+
+  it('年代连续延伸到有影片的最早年代，中间不跳', () => {
+    expect(labels(['2026', '1976'])).toEqual([
+      ...RECENT, '2010年代', '2000年代', '1990年代', '1980年代', '1970年代',
+    ]);
+  });
+
+  it('「更早」「未知」只在有影片时出现，且不拉长年代链', () => {
+    expect(labels(['2026', '1950', ''])).toEqual([...RECENT, '更早', '未知']);
+  });
+
+  it('选中的分组即使为 0 也保留', () => {
+    expect(labels(['2026'], '2000s')).toEqual([...RECENT, '2010年代', '2000年代']);
+    expect(labels(['2026'], 'earlier')).toEqual([...RECENT, '更早']);
+  });
+
+  it('带上计数', () => {
+    const r = visibleYearBuckets(['2026', '2026', '2015'], 2026);
+    expect(r.find((c) => c.bucket.key === '2026')?.count).toBe(2);
+    expect(r.find((c) => c.bucket.key === '2025')?.count).toBe(0);
+    expect(r.find((c) => c.bucket.key === '2010s')?.count).toBe(1);
+  });
+});
 
 describe('allYearBuckets', () => {
   it('连续列出近年、各年代与「更早」', () => {
