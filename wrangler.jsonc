@@ -1,0 +1,16 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "libretv",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2025-11-01",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "observability": { "enabled": true },
+  // Non-secret settings (PASSWORD is a secret: `npx wrangler secret put PASSWORD`)
+  "vars": {
+    "DEFAULT_SOURCES": "[{\"name\":\"光速资源\",\"url\":\"https://api.guangsuapi.com/api.php/provide/vod\"},{\"name\":\"暴风资源\",\"url\":\"https://bfzyapi.com/api.php/provide/vod\"}]"
+  }
+}
