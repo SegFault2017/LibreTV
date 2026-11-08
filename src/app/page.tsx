@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Header } from '@/components/header';
 import { RecommendSection } from '@/components/douban-section';
 import { CategorySection } from '@/components/category-section';
+import { ContinueWatchingRow, WatchlistRow } from '@/components/home-rows';
 import { DetailModal } from '@/components/detail-modal';
 import { AggregatedCard, aggregateResults } from '@/components/video-card';
 import { useAppStore, resolveSource, isInDisabledSubscription, isSourceDisabled } from '@/lib/store';
@@ -376,6 +377,14 @@ function HomeContent() {
               />
             )}
           </section>
+        )}
+
+        {/* 个人化：继续观看 / 我的片单（有搜索时隐藏；无内容时不占位） */}
+        {!urlQuery && (
+          <>
+            <ContinueWatchingRow />
+            <WatchlistRow onOpen={(item) => setDetailItem(item)} />
+          </>
         )}
 
         {/* 分类浏览：按点播源自带分类展示最新影片（有搜索时隐藏） */}

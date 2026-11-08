@@ -1,5 +1,6 @@
 import Dexie, { type EntityTable } from 'dexie';
 import type { SourceConfig } from './types';
+import { sanitizeWatchlist, type WatchlistEntry } from './home-rows';
 // 仅类型引入：store.ts 运行时会引用本模块，反向只取类型不会形成运行时循环
 import type { LiveProbeEntry } from './store';
 import { PERSIST_KEY, flushPendingPersist } from './persist-storage';
@@ -77,6 +78,7 @@ export const db = new Dexie('libretv') as Dexie & {
   liveProbe: EntityTable<LiveProbeEntry & { url: string }, 'url'>;
   segmentMeta: EntityTable<SegmentMetaEntry, 'key'>;
   downloads: EntityTable<DownloadTaskEntry, 'id'>;
+  watchlist: EntityTable<WatchlistEntry, 'id'>;
 };
 
 db.version(1).stores({
@@ -95,6 +97,28 @@ db.version(3).stores({
   segmentMeta: 'key, episodeKey, lastAccess',
   downloads: 'id, createdAt',
 });
+
+// v4：我的片单（收藏的点播影片）
+db.version(4).stores({
+  watchlist: 'id, addedAt',
+});
+
+export const MAX_WATCHLIST = 500;
+
+export async function addToWatchlist(entry: WatchlistEntry): Promise<void> {
+  await db.watchlist.put(entry);
+  const count = await db.watchlist.count();
+  if (count > MAX_WATCHLIST) {
+    const oldest = await db.watchlist.orderBy('addedAt').limit(count - MAX_WATCHLIST).toArray();
+    await db.watchlist.bulkDelete(oldest.map((o) => o.id));
+  }
+}
+
+export async function removeFromWatchlist(id: string): Promise<void> {
+  await db.watchlist.delete(id);
+}
+
+export type { WatchlistEntry };
 
 export const MAX_HISTORY = 100;
 export const MAX_SEARCH_HISTORY = 10;
@@ -212,10 +236,12 @@ export async function exportConfig(): Promise<string> {
   // 导出前 flush：把节流缓冲中的最新设置落盘，避免导出的是 800ms 前的旧快照
   flushPendingPersist();
   const history = await db.history.toArray();
+  const watchlist = await db.watchlist.toArray();
   const settings = localStorage.getItem(PERSIST_KEY);
 
   const data: Record<string, unknown> = {
     viewingHistory: JSON.stringify(history),
+    watchlist: JSON.stringify(watchlist),
   };
   if (settings) data[PERSIST_KEY] = settings;
 
@@ -262,6 +288,11 @@ export async function importConfig(content: string): Promise<void> {
         timestamp: typeof item.timestamp === 'number' ? item.timestamp : Date.now(),
       });
     }
+  }
+
+  if (typeof data['watchlist'] === 'string') {
+    const entries = sanitizeWatchlist(JSON.parse(data['watchlist'])).slice(0, MAX_WATCHLIST);
+    if (entries.length > 0) await db.watchlist.bulkPut(entries);
   }
 }
 
