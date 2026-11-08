@@ -9,6 +9,7 @@ import type { BrowseCategory, SearchResultItem, SourceConfig } from '@/lib/types
 import { visibleYearBuckets, yearBucket, type YearBucket } from '@/lib/year-buckets';
 import { formatRemarks } from '@/lib/remarks';
 import { pageItems } from '@/lib/pagination';
+import { sortByRating } from '@/lib/rating-sort';
 
 import { DoubanCard } from './video-card';
 
@@ -107,10 +108,13 @@ export function CategorySection({
     [items, currentYear, year?.key]
   );
 
-  const shown = useMemo(
-    () => (year ? items.filter((it) => yearBucket(it.year, currentYear).key === year.key) : items),
-    [items, year, currentYear]
-  );
+  /** 排序：源站顺序（最新更新）或本页按评分从高到低；翻页 / 换分类时保持用户的选择 */
+  const [sort, setSort] = useState<'latest' | 'rating'>('latest');
+
+  const shown = useMemo(() => {
+    const filtered = year ? items.filter((it) => yearBucket(it.year, currentYear).key === year.key) : items;
+    return sort === 'rating' ? sortByRating(filtered) : filtered;
+  }, [items, year, currentYear, sort]);
 
   const goToPage = (next: number) => {
     const target = Math.min(Math.max(1, next), pageCount);
@@ -128,7 +132,17 @@ export function CategorySection({
   return (
     <section ref={sectionRef} aria-label="分类浏览" className="mb-10">
       <div className="flex items-center justify-between gap-3 mb-3">
-        <h2 className="text-base font-semibold text-content shrink-0">分类浏览</h2>
+        <div className="flex items-center gap-3 shrink-0">
+          <h2 className="text-base font-semibold text-content">分类浏览</h2>
+          <div className="flex gap-1.5" role="group" aria-label="排序">
+            <Chip small active={sort === 'latest'} onClick={() => setSort('latest')}>
+              最新
+            </Chip>
+            <Chip small active={sort === 'rating'} onClick={() => setSort('rating')}>
+              评分
+            </Chip>
+          </div>
+        </div>
         {sources.length > 1 &&
           (sources.length <= 4 ? (
             <div className="flex gap-1.5 overflow-x-auto" role="group" aria-label="选择点播源">
@@ -219,7 +233,7 @@ export function CategorySection({
               {shown.map((item) => (
                 <DoubanCard
                   key={`${item.sourceKey}_${item.vodId}`}
-                  item={{ title: item.name, cover: item.pic || '' }}
+                  item={{ title: item.name, cover: item.pic || '', rating: item.rating }}
                   badge={formatRemarks(item.remarks)}
                   year={/^(19|20)\d{2}$/.test(item.year?.trim() ?? '') ? item.year?.trim() : undefined}
                   onClick={() => onOpen(item)}

@@ -20,6 +20,8 @@ export interface SearchResultItem {
   year?: string;
   area?: string;
   remarks?: string;
+  /** 评分（一位小数，如 "8.7"）：优先豆瓣评分，其次源站评分；未评分为 undefined */
+  rating?: string;
   /** 自定义源的 API 地址，详情请求需要 */
   sourceUrl?: string;
   isAdult?: boolean;

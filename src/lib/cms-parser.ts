@@ -40,10 +40,18 @@ export function parseSearchList(
       year: typeof vod.vod_year === 'string' ? vod.vod_year : undefined,
       area: typeof vod.vod_area === 'string' ? vod.vod_area : undefined,
       remarks: typeof vod.vod_remarks === 'string' ? vod.vod_remarks : undefined,
+      rating: parseRating(vod.vod_douban_score) ?? parseRating(vod.vod_score),
       sourceUrl: source.url,
       isAdult: source.isAdult,
     };
   });
+}
+
+/** 源站评分（0-10）→ 一位小数字符串；0、无效或越界视为未评分 */
+function parseRating(raw: unknown): string | undefined {
+  if (typeof raw !== 'string' && typeof raw !== 'number') return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 && n <= 10 ? n.toFixed(1) : undefined;
 }
 
 /**

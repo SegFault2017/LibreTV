@@ -31,6 +31,23 @@ describe('parseSearchList', () => {
     expect(items[1].vodId).toBe('abc-1');
   });
 
+  it('评分：优先豆瓣评分，其次源站评分；0 / 无效视为未评分', () => {
+    const items = parseSearchList(
+      {
+        list: [
+          { vod_id: 1, vod_name: 'a', vod_douban_score: '8.7', vod_score: '6.0' },
+          { vod_id: 2, vod_name: 'b', vod_douban_score: '0.0', vod_score: '9' },
+          { vod_id: 3, vod_name: 'c', vod_douban_score: 0, vod_score: '0.0' },
+          { vod_id: 4, vod_name: 'd', vod_score: 'abc' },
+          { vod_id: 5, vod_name: 'e', vod_score: 7.25 },
+          { vod_id: 6, vod_name: 'f', vod_score: '11' },
+        ],
+      },
+      source
+    );
+    expect(items.map((i) => i.rating)).toEqual(['8.7', '9.0', undefined, undefined, '7.3', undefined]);
+  });
+
   it('对缺失字段健壮', () => {
     const items = parseSearchList({ list: [{}] }, source);
     expect(items[0].vodId).toBe('');
