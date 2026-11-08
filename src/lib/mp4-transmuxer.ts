@@ -54,11 +54,16 @@ function walkBoxes(
  * 0xFFFFFFFF / 90000 ≈ 47721.86s ≈ 13:15:21，即「每集下载出来都是 13 小时多」。
  * 与片源无关，是封装层问题，只能在写出 initSegment 前就地回填。
  *
+ * 每条轨的 `mdhd` 也是同一个哨兵值（按各自 timescale，音频 44100 时 ≈ 27 小时）。
+ * QuickTime / AVFoundation 会把它当成真实媒体时长再叠加分片，导致时长离谱；
+ * fMP4 的轨道时长本应由分片决定，因此 mdhd 的哨兵统一清零（与 ffmpeg 的 fMP4 一致），
+ * 不论是否知道整集时长。
+ *
  * 只处理 version 0（mux.js 实际产物）；version 1 的 8 字节 duration 不改写。
  */
 export function patchInitSegmentDuration(init: Uint8Array, seconds: number): Uint8Array {
-  if (!Number.isFinite(seconds) || seconds <= 0) return init;
-  const ticks = Math.min(Math.round(seconds * MOVIE_TIMESCALE), UNKNOWN_DURATION - 1);
+  const known = Number.isFinite(seconds) && seconds > 0;
+  const ticks = known ? Math.min(Math.round(seconds * MOVIE_TIMESCALE), UNKNOWN_DURATION - 1) : 0;
   // 复制一份：initSegment 由 mux.js 内部生成，直接改可能污染其复用缓冲
   const out = init.slice();
   walkBoxes(out, 0, out.length, (type, payload, boxEnd) => {
@@ -66,22 +71,53 @@ export function patchInitSegmentDuration(init: Uint8Array, seconds: number): Uin
     walkBoxes(out, payload, boxEnd, (childType, childPayload, childEnd) => {
       if (childType === 'mvhd') {
         // payload: version(1) flags(3) creation(4) modification(4) timescale(4) duration(4)
-        if (out[childPayload] === 0 && childPayload + 20 <= childEnd) {
+        if (known && out[childPayload] === 0 && childPayload + 20 <= childEnd) {
           writeU32(out, childPayload + 16, ticks);
         }
         return;
       }
       if (childType !== 'trak') return;
       walkBoxes(out, childPayload, childEnd, (leafType, leafPayload, leafEnd) => {
-        if (leafType !== 'tkhd') return;
-        // payload: version(1) flags(3) creation(4) modification(4) track_ID(4) reserved(4) duration(4)
-        if (out[leafPayload] === 0 && leafPayload + 24 <= leafEnd) {
-          writeU32(out, leafPayload + 20, ticks);
+        if (leafType === 'tkhd') {
+          // payload: version(1) flags(3) creation(4) modification(4) track_ID(4) reserved(4) duration(4)
+          if (known && out[leafPayload] === 0 && leafPayload + 24 <= leafEnd) {
+            writeU32(out, leafPayload + 20, ticks);
+          }
+          return;
         }
+        if (leafType !== 'mdia') return;
+        walkBoxes(out, leafPayload, leafEnd, (mdiaType, mdiaPayload, mdiaEnd) => {
+          // mdhd payload: version(1) flags(3) creation(4) modification(4) timescale(4) duration(4)
+          if (mdiaType !== 'mdhd' || out[mdiaPayload] !== 0 || mdiaPayload + 20 > mdiaEnd) return;
+          if (readU32(out, mdiaPayload + 16) === UNKNOWN_DURATION) writeU32(out, mdiaPayload + 16, 0);
+        });
       });
     });
   });
   return out;
+}
+
+/**
+ * 把一段 mux.js 产出的媒体数据里每个 `moof` 的 `mfhd` 序号改写为连续递增，返回下一个可用序号。
+ *
+ * mux.js 每次 flush 为音频、视频各写一个 moof，二者序号相同，且首段从 0 开始（0,0,1,1,…）。
+ * 浏览器 MSE 不在意，但 QuickTime / AVFoundation 会丢弃序号重复的分片：
+ * 视频轨的分片全被丢掉 → 下载的 MP4 在 QuickTime 里「打不开 / 只有声音 / 时长不对」。
+ * ISO BMFF 要求序号从 1 起、按出现顺序递增，这里按文件内顺序重编号（就地修改 media）。
+ */
+export function renumberFragments(media: Uint8Array, nextSequence: number): number {
+  let seq = nextSequence;
+  walkBoxes(media, 0, media.length, (type, payload, boxEnd) => {
+    if (type !== 'moof') return;
+    walkBoxes(media, payload, boxEnd, (childType, childPayload, childEnd) => {
+      // mfhd payload: version(1) flags(3) sequence_number(4)
+      if (childType === 'mfhd' && childPayload + 8 <= childEnd) {
+        writeU32(media, childPayload + 4, seq);
+        seq += 1;
+      }
+    });
+  });
+  return seq;
 }
 
 export interface StreamingTransmuxerOptions {
@@ -97,6 +133,8 @@ export class StreamingTransmuxer {
   private writeChain: Promise<void> = Promise.resolve();
   private writeError: Error | undefined;
   private durationSeconds: number | undefined;
+  /** 下一个 moof 序号（见 renumberFragments） */
+  private nextSequence = 1;
 
   constructor(
     writer?: { write(data: Uint8Array): Promise<void> },
@@ -107,14 +145,10 @@ export class StreamingTransmuxer {
     this.transmuxer = new muxjs.mp4.Transmuxer({ keepOriginalTimestamps: true });
     this.transmuxer.on('data', (segment: any) => {
       const media = new Uint8Array(segment.data);
+      this.nextSequence = renumberFragments(media, this.nextSequence);
       const data: Uint8Array = this.initWritten
         ? media
-        : concat(
-            this.durationSeconds
-              ? patchInitSegmentDuration(new Uint8Array(segment.initSegment), this.durationSeconds)
-              : new Uint8Array(segment.initSegment),
-            media
-          );
+        : concat(patchInitSegmentDuration(new Uint8Array(segment.initSegment), this.durationSeconds ?? NaN), media);
       this.initWritten = true;
       this.segmentCount += 1;
       // 写入串行化：写失败暂存，下一次 pushAndTransmux 时抛出
@@ -171,13 +205,15 @@ export function transmuxTSToMP4(tsSegments: Uint8Array[], duration?: number): Bl
   const transmuxer = new muxjs.mp4.Transmuxer({ keepOriginalTimestamps: true });
   const chunks: Uint8Array[] = [];
   let initWritten = false;
+  let nextSequence = 1;
   transmuxer.on('data', (segment: any) => {
     if (!initWritten) {
-      const init = new Uint8Array(segment.initSegment);
-      chunks.push(duration ? patchInitSegmentDuration(init, duration) : init);
+      chunks.push(patchInitSegmentDuration(new Uint8Array(segment.initSegment), duration ?? NaN));
       initWritten = true;
     }
-    chunks.push(new Uint8Array(segment.data));
+    const media = new Uint8Array(segment.data);
+    nextSequence = renumberFragments(media, nextSequence);
+    chunks.push(media);
   });
   for (const ts of tsSegments) transmuxer.push(ts);
   transmuxer.flush();
