@@ -1,16 +1,15 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { keepPreviousData, useInfiniteQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/client-api';
 import { useAppStore } from '@/lib/store';
 import { cn } from '@/lib/utils';
 import type { BrowseCategory, SearchResultItem, SourceConfig } from '@/lib/types';
 import { visibleYearBuckets, yearBucket, type YearBucket } from '@/lib/year-buckets';
 import { formatRemarks } from '@/lib/remarks';
+import { pageItems } from '@/lib/pagination';
 
-/** 选中的年份在已加载影片中一部都没有时，最多自动翻几页去找 */
-const MAX_AUTO_PAGES = 5;
 import { DoubanCard } from './video-card';
 
 /**
@@ -34,7 +33,11 @@ export function CategorySection({
   const [typeId, setTypeId] = useState('');
   /** 分类表：每次响应都带回，单独保存以免切换分类加载时 chips 闪烁 */
   const [categories, setCategories] = useState<BrowseCategory[]>([]);
-  /** Selected year group (null = all). Filters only the pages loaded so far. */
+  /** 当前页码（源站分页，1 起） */
+  const [page, setPage] = useState(1);
+  /** 分类区顶部：翻页后滚回这里 */
+  const sectionRef = useRef<HTMLElement>(null);
+  /** Selected year group (null = all). Filters only the current page. */
   const [year, setYear] = useState<YearBucket | null>(null);
   const currentYear = useMemo(() => new Date().getFullYear(), []);
 
@@ -47,20 +50,23 @@ export function CategorySection({
     setCategories([]);
   }, [source?.key]);
 
-  const query = useInfiniteQuery({
-    queryKey: ['browse', source?.url, typeId, yellowFilter],
-    queryFn: ({ pageParam, signal }) => api.browse(source!, typeId, pageParam, yellowFilter, signal),
-    initialPageParam: 1,
-    getNextPageParam: (last) => (last.page < last.pageCount ? last.page + 1 : undefined),
+  // 换源 / 换分类：回到第 1 页
+  useEffect(() => setPage(1), [source?.key, typeId]);
+
+  const query = useQuery({
+    queryKey: ['browse', source?.url, typeId, page, yellowFilter],
+    queryFn: ({ signal }) => api.browse(source!, typeId, page, yellowFilter, signal),
     enabled: Boolean(source),
     placeholderData: keepPreviousData,
     staleTime: 120_000,
   });
 
-  const firstCategories = query.data?.pages[0]?.categories;
+  const responseCategories = query.data?.categories;
   useEffect(() => {
-    if (firstCategories) setCategories(firstCategories);
-  }, [firstCategories]);
+    if (responseCategories) setCategories(responseCategories);
+  }, [responseCategories]);
+
+  const pageCount = Math.max(1, query.data?.pageCount ?? 1);
 
   const { tops, childrenOf } = useMemo(() => {
     const ids = new Set(categories.map((c) => c.id));
@@ -81,16 +87,14 @@ export function CategorySection({
     setTypeId(id ? childrenOf.get(id)?.[0]?.id ?? id : '');
   };
 
-  // 同一影片可能出现在相邻两页（源站翻页期间有更新），按 vodId 去重
+  // 同一页内也可能有重复条目，按 vodId 去重
   const items = useMemo(() => {
     const seen = new Set<string>();
-    return (query.data?.pages ?? [])
-      .flatMap((p) => p.list)
-      .filter((it) => (seen.has(it.vodId) ? false : (seen.add(it.vodId), true)));
+    return (query.data?.list ?? []).filter((it) => (seen.has(it.vodId) ? false : (seen.add(it.vodId), true)));
   }, [query.data]);
 
-  // Switching category or source clears the year filter
-  useEffect(() => setYear(null), [typeId, source?.key]);
+  // Switching category, source or page clears the year filter (it only applies to the current page)
+  useEffect(() => setYear(null), [typeId, source?.key, page]);
 
   // Year row: recent years one by one, then decades down to the oldest one with videos (no gaps)
   const yearCounts = useMemo(
@@ -108,42 +112,21 @@ export function CategorySection({
     [items, year, currentYear]
   );
 
-  // A year with nothing loaded yet: fetch a few more pages automatically to look for it
-  const [autoPages, setAutoPages] = useState(0);
-  useEffect(() => setAutoPages(0), [year?.key, typeId, source?.key]);
-  const autoSearching =
-    Boolean(year) && shown.length === 0 && Boolean(query.hasNextPage) && autoPages < MAX_AUTO_PAGES;
-  const { fetchNextPage, isFetching } = query;
-  useEffect(() => {
-    if (!autoSearching || isFetching) return;
-    setAutoPages((n) => n + 1);
-    fetchNextPage();
-  }, [autoSearching, isFetching, fetchNextPage]);
-
-  // Infinite scroll (only without a year filter: with one, the sentinel would stay visible and
-  // keep paging through the whole source; the year filter has its own bounded auto-load above)
-  const sentinelRef = useRef<HTMLDivElement>(null);
-  const [nearBottom, setNearBottom] = useState(false);
-  useEffect(() => {
-    const el = sentinelRef.current;
-    if (!el || typeof IntersectionObserver === 'undefined') return;
-    const observer = new IntersectionObserver((entries) => setNearBottom(entries.some((e) => e.isIntersecting)), {
-      rootMargin: '600px',
-    });
-    observer.observe(el);
-    return () => observer.disconnect();
-  });
-  const { hasNextPage } = query;
-  useEffect(() => {
-    if (nearBottom && !year && hasNextPage && !isFetching) fetchNextPage();
-  }, [nearBottom, year, hasNextPage, isFetching, fetchNextPage]);
+  const goToPage = (next: number) => {
+    const target = Math.min(Math.max(1, next), pageCount);
+    if (target === page) return;
+    setPage(target);
+    // 滚回分类区顶部（留出顶栏高度），否则换页后停在列表底部
+    const top = sectionRef.current?.getBoundingClientRect().top;
+    if (top !== undefined && top < 0) window.scrollBy({ top: top - 64, behavior: 'smooth' });
+  };
 
   if (!source) return null;
 
   const loadingFresh = query.isLoading || (query.isPlaceholderData && query.isFetching);
 
   return (
-    <section aria-label="分类浏览" className="mb-10">
+    <section ref={sectionRef} aria-label="分类浏览" className="mb-10">
       <div className="flex items-center justify-between gap-3 mb-3">
         <h2 className="text-base font-semibold text-content shrink-0">分类浏览</h2>
         {sources.length > 1 &&
@@ -228,10 +211,8 @@ export function CategorySection({
           <>
             {year && (
               <p className="text-xs text-faint mb-2">
-                已加载 {items.length} 部中有 {shown.length} 部属于「{year.label}」
-                {autoSearching
-                  ? '，正在加载更多…'
-                  : query.hasNextPage && '，点「加载更多」可找到更多'}
+                本页 {items.length} 部中有 {shown.length} 部属于「{year.label}」
+                {pageCount > 1 && '，翻页可查看其他影片'}
               </p>
             )}
             <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2.5 sm:gap-3">
@@ -245,19 +226,10 @@ export function CategorySection({
                 />
               ))}
             </div>
-            <div ref={sentinelRef} aria-hidden />
-            {query.hasNextPage && (
-              <div className="flex justify-center mt-4">
-                <button
-                  className="btn-ghost btn-sm"
-                  disabled={query.isFetchingNextPage}
-                  onClick={() => query.fetchNextPage()}
-                >
-                  {query.isFetchingNextPage ? '加载中…' : '加载更多'}
-                </button>
-              </div>
-            )}
           </>
+        )}
+        {!query.isError && pageCount > 1 && (
+          <Pagination page={page} pageCount={pageCount} onChange={goToPage} />
         )}
       </div>
     </section>
@@ -273,7 +245,7 @@ function Chip({
 }: {
   active: boolean;
   small?: boolean;
-  /** 暂无内容（已加载影片中没有该年份）：变暗但仍可点，点了会自动加载更多 */
+  /** 暂无内容（本页没有该年份）：变暗但仍可点 */
   dim?: boolean;
   onClick: () => void;
   children: React.ReactNode;
@@ -291,6 +263,51 @@ function Chip({
     >
       {children}
     </button>
+  );
+}
+
+/** 分页条：桌面端显示页码（1 … 4 5 6 … 120），手机端只显示「5 / 120」 */
+function Pagination({
+  page,
+  pageCount,
+  onChange,
+}: {
+  page: number;
+  pageCount: number;
+  onChange: (page: number) => void;
+}) {
+  const arrow = 'filter-tag filter-tag-sm disabled:opacity-40 disabled:pointer-events-none';
+  return (
+    <nav className="mt-6 flex items-center justify-center gap-1.5" aria-label="分页">
+      <button className={arrow} disabled={page <= 1} onClick={() => onChange(page - 1)}>
+        ‹ 上一页
+      </button>
+      <span className="sm:hidden px-2 text-sm text-muted tabular-nums">
+        {page} / {pageCount}
+      </span>
+      <div className="hidden sm:flex items-center gap-1.5">
+        {pageItems(page, pageCount).map((item, i) =>
+          item === '…' ? (
+            <span key={`gap-${i}`} className="px-1 text-faint" aria-hidden>
+              …
+            </span>
+          ) : (
+            <button
+              key={item}
+              className={cn('filter-tag filter-tag-sm min-w-9 justify-center tabular-nums', item === page && 'filter-tag-active')}
+              onClick={() => onChange(item)}
+              aria-label={`第 ${item} 页`}
+              aria-current={item === page ? 'page' : undefined}
+            >
+              {item}
+            </button>
+          )
+        )}
+      </div>
+      <button className={arrow} disabled={page >= pageCount} onClick={() => onChange(page + 1)}>
+        下一页 ›
+      </button>
+    </nav>
   );
 }
 
